@@ -74,44 +74,56 @@ app.post("/fill", async (req, res) => {
       const workbook = new ExcelJS.Workbook();
       await workbook.xlsx.readFile(source);
 
-      for (const sheet of workbook.worksheets) {
+for (const sheet of workbook.worksheets) {
   for (const row of sheet._rows) {
     if (!row) continue;
     for (const cell of row._cells) {
       if (!cell?.value || typeof cell.value !== "string") continue;
-      let value = cell.value.trim();
+      let value = cell.value;
 
-      // check if this cell itself is a signature placeholder
-      const sigMatch = value.match(/^{{(signature\d+)}}$/i);
-      if (sigMatch) {
-        const key = sigMatch[1];
-        if (data[key]?.startsWith("http")) {
-          try {
-            const response = await axios.get(data[key], { responseType: "arraybuffer" });
-            const imageId = workbook.addImage({ buffer: response.data, extension: "png" });
-            sheet.addImage(imageId, {
-              tl: { col: cell.col - 1, row: cell.row - 1 },
-              ext: { width: 120, height: 40 },
-            });
-            cell.value = ""; // clear placeholder text
-          } catch (e) {
-            console.log("image fetch error:", e.message);
+      // ✅ Insert actual line breaks for {{_break}} placeholders
+      if (value.includes("{{_break}}")) {
+        value = value.split("{{_break}}").join("\n");
+        // ExcelJS: enable wrap text
+        cell.alignment = { wrapText: true };
+      }
+
+      // Check for signature placeholders
+      // check if this cell is a signature placeholder
+const sigMatch = value.match(/^{{(signature\d+)}}$/i);
+if (sigMatch) {
+  const key = sigMatch[1];
+
+  // if there is a URL, fetch and insert image
+  if (data[key]?.startsWith("http")) {
+    try {
+      const response = await axios.get(data[key], { responseType: "arraybuffer" });
+      const imageId = workbook.addImage({ buffer: response.data, extension: "png" });
+      sheet.addImage(imageId, {
+        tl: { col: cell.col - 1, row: cell.row - 1 },
+        ext: { width: 120, height: 40 },
+      });
+    } catch (e) {
+      console.log("image fetch error:", e.message);
+    }
+  }
+
+  // whether image exists or not, clear the placeholder text so {{signatureX}} doesn't show
+  cell.value = "";
+  continue; // skip normal text replacement
+}
+
+      // Replace other placeholders
+              for (const key of Object.keys(data)) {
+          if (!key.toLowerCase().startsWith("signature")) {
+            value = value.replaceAll(`{{${key}}}`, data[key]);
           }
         }
-        continue; // skip normal text replacement
-      }
 
-      // normal text replacement for non-signature placeholders
-      for (const key of Object.keys(data)) {
-        if (!key.toLowerCase().startsWith("signature")) {
-          value = value.replaceAll(`{{${key}}}`, data[key]);
-        }
-      }
       cell.value = value;
     }
   }
 }
-
       filledFilename = filename.replace(".xlsx", `-filled-${Date.now()}.xlsx`);
       await workbook.xlsx.writeFile(path.join(UPLOAD_DIR, filledFilename));
     } else {
